@@ -100,13 +100,14 @@ func (rec *recording) finish(session string) {
 	if rec == nil || rec.lines.Len() == 0 {
 		return
 	}
-	if !plainSessionID.MatchString(session) {
-		session = noSession
+	name := noSession
+	if plainSessionID.MatchString(session) {
+		name = session
 	}
 	r := rec.recorder
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	f, err := os.OpenFile(filepath.Join(r.dir, session+".jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filepath.Join(r.dir, name+".jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		log.Printf("record: %v", err)
 		return
