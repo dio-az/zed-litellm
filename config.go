@@ -80,7 +80,7 @@ func bindConfigFlags(fs *flag.FlagSet) func(*config) {
 	d := defaultConfig()
 	listen := fs.String("listen", d.Listen, "address to listen on")
 	upstream := fs.String("upstream", "", "LiteLLM base URL (required, here or in the config file)")
-	cache := fs.String("cache", d.Cache, "TTL of the conversation cache: auto, 1h or bypass")
+	cache := fs.String("cache", d.Cache, "TTL of the conversation cache: auto, 1h, bypass or off")
 	debug := fs.Bool("debug", false, "log each request, and record it to "+shortPath(recordDir()))
 
 	return func(cfg *config) {

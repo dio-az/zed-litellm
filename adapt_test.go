@@ -239,12 +239,26 @@ func TestClaudeWithoutTopLevelMarkerIsUnchanged(t *testing.T) {
 }
 
 func TestOtherModelsKeepOriginalBytes(t *testing.T) {
-	for _, mode := range cacheModes {
+	for _, mode := range []string{cacheAuto, cache1h, cacheBypass} {
 		in := []byte(`{"model":"gemini-4-argon", "tools":[{"name":"t","cache_control":{"type":"ephemeral","ttl":"1h"}}],` +
 			`"messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral"}}`)
 		got, session := adapter{cache: mode}.adapt(in)
 		if !bytes.Equal(got, in) || session == "" {
 			t.Errorf("%s: got %s (session %q)", mode, got, session)
+		}
+	}
+}
+
+func TestCacheOffRemovesEveryMarker(t *testing.T) {
+	for _, model := range []string{"gemini-4-argon", "claude-opus-5-5"} {
+		in := `{"model":"` + model + `","tools":[{"name":"t","cache_control":{"type":"ephemeral","ttl":"1h"}}],` +
+			`"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral","ttl":"1h"}}],` +
+			`"messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral"}}`
+		want := `{"model":"` + model + `","tools":[{"name":"t"}],"system":[{"type":"text","text":"s"}],` +
+			`"messages":[{"role":"user","content":"hi"}]}`
+		got, session := adapter{cache: cacheAuto, overrides: map[string]modelConfig{model: {Cache: cacheOff}}}.adapt([]byte(in))
+		if string(got) != want || session == "" {
+			t.Errorf("%s: got  %s (session %q)\nwant %s", model, got, session, want)
 		}
 	}
 }

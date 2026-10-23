@@ -93,8 +93,11 @@ The cache mode sets the TTL (how long the provider keeps the cache after its las
 | `auto` | The TTL from Zed, if any. Else 1 hour once the earlier conversation is 12 times the new content, and 5 minutes before that. |
 | `1h` | 1 hour |
 | `bypass` | The TTL from Zed (today, 5 minutes) |
+| `off` | No cache. Removes every cache marker, on any model. |
 
 A 1-hour write costs 2 times the input price instead of 1.25 times, but the cache survives a pause of 5 to 60 minutes. In the recorded session, `auto` picked 1 hour on every turn after the first.
+
+For a Gemini model on Vertex, LiteLLM turns Zed's markers into explicit context caching. Some models, such as `gemini-4-argon`, reject it, so give them `"cache": "off"`.
 
 ### Sessions
 

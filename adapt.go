@@ -12,10 +12,11 @@ const (
 	cacheAuto   = "auto"
 	cache1h     = "1h"
 	cacheBypass = "bypass"
+	cacheOff    = "off"
 )
 
 var (
-	cacheModes        = []string{cacheAuto, cache1h, cacheBypass}
+	cacheModes        = []string{cacheAuto, cache1h, cacheBypass, cacheOff}
 	cacheControlKey   = []byte(`"cache_control"`)
 	uncacheableBlocks = map[string]bool{"thinking": true, "redacted_thinking": true}
 
@@ -52,6 +53,16 @@ func (a adapter) adapt(body []byte) ([]byte, string) {
 		mode = m
 	}
 
+	if mode == cacheOff {
+		removed := req.del("cache_control")
+		for _, key := range []string{"tools", "system"} {
+			removed = rewriteMarkers(&req, key, func(json.RawMessage) json.RawMessage { return nil }) || removed
+		}
+		if removed {
+			return req.bytes(), session
+		}
+		return body, session
+	}
 	if strings.HasPrefix(model, "claude") && moveCacheMarkerToMessages(&req, messages, mode) {
 		return req.bytes(), session
 	}
@@ -141,8 +152,9 @@ func moveCacheMarkerToMessages(req *object, messages []json.RawMessage, mode str
 	if ttl == cache1h {
 		// Anthropic rejects a marker with a longer TTL after one with a shorter TTL, and tools and
 		// system come before the messages. Zed gives them 1h already, so this rarely changes them.
-		lengthenMarkers(req, "tools")
-		lengthenMarkers(req, "system")
+		for _, key := range []string{"tools", "system"} {
+			rewriteMarkers(req, key, func(m json.RawMessage) json.RawMessage { return withTTL(m, cache1h) })
+		}
 	}
 	marker = withTTL(marker, ttl)
 
@@ -252,15 +264,16 @@ func markLastCacheableBlock(message, marker json.RawMessage) (json.RawMessage, b
 	return nil, false
 }
 
-// A string, for example a plain system prompt, has no blocks to mark.
-func lengthenMarkers(obj *object, key string) {
+// A string, for example a plain system prompt, has no blocks to mark. A nil result of rewrite removes
+// the marker.
+func rewriteMarkers(obj *object, key string, rewrite func(json.RawMessage) json.RawMessage) bool {
 	raw, ok := obj.get(key)
 	if !ok || !bytes.Contains(raw, cacheControlKey) {
-		return
+		return false
 	}
 	blocks, err := parseArray(raw)
 	if err != nil {
-		return
+		return false
 	}
 	changed := false
 	for i, b := range blocks {
@@ -272,13 +285,19 @@ func lengthenMarkers(obj *object, key string) {
 		if !ok {
 			continue
 		}
-		if long := withTTL(marker, cache1h); !bytes.Equal(long, marker) {
-			block.set("cache_control", long)
-			blocks[i] = block.bytes()
-			changed = true
+		switch updated := rewrite(marker); {
+		case updated == nil:
+			block.del("cache_control")
+		case !bytes.Equal(updated, marker):
+			block.set("cache_control", updated)
+		default:
+			continue
 		}
+		blocks[i] = block.bytes()
+		changed = true
 	}
 	if changed {
 		obj.set(key, arrayBytes(blocks))
 	}
+	return changed
 }
