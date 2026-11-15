@@ -280,6 +280,7 @@ func TestConfigRejectsTypos(t *testing.T) {
 		`{"models": []}`,
 		`{"verbose": true}`,
 		`{"debug": true}`,
+		`{"upstream": "http://litellm:4000", "overrides": {"gemini-*": {"name": "Gemini"}}}`,
 	} {
 		path := filepath.Join(t.TempDir(), "config.json")
 		if err := os.WriteFile(path, []byte(file), 0o644); err != nil {
@@ -299,6 +300,8 @@ func TestCacheModeComesFromOverrideThenGlobal(t *testing.T) {
 	}{
 		"defaults":              {`{}`, nil, `{"type":"ephemeral","ttl":"1h"}`},
 		"global bypass":         {`{}`, []string{"-cache", "bypass"}, `{"type":"ephemeral"}`},
+		"pattern beats global":  {`{"cache": "bypass", "overrides": {"claude-*": {"cache": "1h"}}}`, nil, `{"type":"ephemeral","ttl":"1h"}`},
+		"exact beats pattern":   {`{"overrides": {"claude-*": {"cache": "bypass"}, "claude-opus-5-5": {"cache": "1h"}}}`, nil, `{"type":"ephemeral","ttl":"1h"}`},
 		"override beats global": {`{"cache": "bypass", "overrides": {"claude-opus-5-5": {"cache": "1h"}}}`, nil, `{"type":"ephemeral","ttl":"1h"}`},
 		"override for another":  {`{"cache": "bypass", "overrides": {"gpt-6.1-sol": {"cache": "1h"}}}`, nil, `{"type":"ephemeral"}`},
 	}
@@ -348,5 +351,65 @@ func TestUpstreamIsRequired(t *testing.T) {
 	}
 	if err := initConfig(missing, flagsFrom(t)); err == nil {
 		t.Error("init wrote a config without an upstream")
+	}
+}
+
+func TestPatternOverridesMergeFromBroadToExact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	file := `{
+		"upstream": "http://litellm:4000",
+		"overrides": {
+			"*": {"thinking": false, "max_tokens": 16000},
+			"gemini-*": {"thinking": true, "effort": ["low", "high"]},
+			"gemini-4-*": {"max_tokens": 64000, "effort": ["low", "medium"]},
+			"gemini-4-argon": {"name": "Gemini 4 Argon"}
+		}
+	}`
+	if err := os.WriteFile(path, []byte(file), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path, flagsFrom(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	argon := overrideFor(cfg.Overrides, "gemini-4-argon")
+	if argon.Cache != cacheOff || argon.Name != "Gemini 4 Argon" || *argon.MaxTokens != 64000 || !*argon.Thinking {
+		t.Errorf("argon = %+v", argon)
+	}
+	if !slices.Equal(argon.Effort, []string{"low", "medium"}) {
+		t.Errorf("argon effort = %v, want [low medium] from gemini-4-* over gemini-*", argon.Effort)
+	}
+
+	// Patterns cross "/" so namespaced LiteLLM IDs match too.
+	if got := overrideFor(cfg.Overrides, "vertex_ai/gemini-4-argon").MaxTokens; got == nil || *got != 16000 {
+		t.Errorf("namespaced match max_tokens = %v, want 16000 from *", got)
+	}
+
+	cfg.Overrides["gemini-4-argon"] = cfg.Overrides["gemini-4-argon"].merge(modelConfig{Cache: cacheAuto})
+	if got := overrideFor(cfg.Overrides, "gemini-4-argon").Cache; got != cacheAuto {
+		t.Errorf("argon cache = %q, want auto", got)
+	}
+	if got := overrideFor(cfg.Overrides, "gemini-4-carbon").Cache; got != cacheOff {
+		t.Errorf("carbon cache = %q, want off", got)
+	}
+}
+
+func TestMatchPattern(t *testing.T) {
+	for _, tc := range []struct {
+		pat, s string
+		want   bool
+	}{
+		{"*", "", true},
+		{"*gemini-4-*", "vertex_ai/gemini-4-argon", true},
+		{"a*b*c", "axbyc", true},
+		{"a*b*b", "ab", false},
+		{"a*b*b", "abxb", true},
+		{"a*a", "a", false},
+		{"exact", "exact2", false},
+	} {
+		if got := matchPattern(tc.pat, tc.s); got != tc.want {
+			t.Errorf("matchPattern(%q, %q) = %v, want %v", tc.pat, tc.s, got, tc.want)
+		}
 	}
 }

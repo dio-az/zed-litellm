@@ -55,7 +55,7 @@ The config file is `~/.config/zed-litellm/config.json`. A flag replaces the valu
 | `listen` | `-listen` | `127.0.0.1:8787` |
 | `upstream` | `-upstream` | Required |
 | `cache` | `-cache` | `auto` |
-| `overrides` | | `{}` |
+| `overrides` | | `{"gemini-4-*": {"cache": "off"}}` |
 
 `zed-litellm -upstream <URL> init` writes the config file with only the flags you give. Restart after you edit the file.
 
@@ -69,6 +69,8 @@ Zed shows every LiteLLM model with `mode: chat`. `overrides` changes what LiteLL
 	"kimi-k3": { "max_tokens": 32000, "effort": ["low", "high", "max"] }
 }
 ```
+
+A key in `overrides` can be a model ID or a `*` pattern. When several keys match one model, their fields merge: a narrower pattern replaces a broader one, and an exact model ID wins. A pattern cannot set `name`.
 
 | Key | Zed uses it for | Default |
 |---|---|---|
@@ -97,7 +99,7 @@ The cache mode sets the TTL (how long the provider keeps the cache after its las
 
 A 1-hour write costs 2 times the input price instead of 1.25 times, but the cache survives a pause of 5 to 60 minutes. In the recorded session, `auto` picked 1 hour on every turn after the first.
 
-For a Gemini model on Vertex, LiteLLM turns Zed's markers into explicit context caching. Some models, such as `gemini-4-argon`, reject it, so give them `"cache": "off"`.
+For a Gemini model on Vertex, LiteLLM turns Zed's markers into explicit context caching. Gemini 4 models reject it, so `gemini-4-*` defaults to `"cache": "off"`.
 
 ### Sessions
 

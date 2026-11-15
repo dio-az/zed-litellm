@@ -250,13 +250,17 @@ func TestOtherModelsKeepOriginalBytes(t *testing.T) {
 }
 
 func TestCacheOffRemovesEveryMarker(t *testing.T) {
-	for _, model := range []string{"gemini-4-argon", "claude-opus-5-5"} {
+	cases := map[string]adapter{
+		"gemini-4-carbon": testAdapter,
+		"claude-opus-5-5": {cache: cacheAuto, overrides: map[string]modelConfig{"claude-*": {Cache: cacheOff}}},
+	}
+	for model, a := range cases {
 		in := `{"model":"` + model + `","tools":[{"name":"t","cache_control":{"type":"ephemeral","ttl":"1h"}}],` +
 			`"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral","ttl":"1h"}}],` +
 			`"messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral"}}`
 		want := `{"model":"` + model + `","tools":[{"name":"t"}],"system":[{"type":"text","text":"s"}],` +
 			`"messages":[{"role":"user","content":"hi"}]}`
-		got, session := adapter{cache: cacheAuto, overrides: map[string]modelConfig{model: {Cache: cacheOff}}}.adapt([]byte(in))
+		got, session := a.adapt([]byte(in))
 		if string(got) != want || session == "" {
 			t.Errorf("%s: got  %s (session %q)\nwant %s", model, got, session, want)
 		}

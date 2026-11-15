@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -38,13 +40,20 @@ type modelConfig struct {
 	Effort         []string `json:"effort,omitempty"`
 }
 
-var zedEffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
+var (
+	zedEffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
+
+	// LiteLLM turns Zed's cache markers into Vertex explicit context caching, which Gemini 4 rejects.
+	defaultOverrides = map[string]modelConfig{
+		"gemini-4-*": {Cache: cacheOff},
+	}
+)
 
 func defaultConfig() config {
 	return config{
 		Listen:    "127.0.0.1:8787",
 		Cache:     cacheAuto,
-		Overrides: map[string]modelConfig{},
+		Overrides: maps.Clone(defaultOverrides),
 	}
 }
 
@@ -113,6 +122,13 @@ func loadConfig(path string, applyFlags func(*config)) (config, error) {
 		if err := dec.Decode(&cfg); err != nil {
 			return cfg, fmt.Errorf("%s: %w", path, err)
 		}
+		if cfg.Overrides == nil {
+			cfg.Overrides = map[string]modelConfig{}
+		}
+		// Decode replaces a whole map entry, which would drop the other fields of a default.
+		for id, mc := range defaultOverrides {
+			cfg.Overrides[id] = mc.merge(cfg.Overrides[id])
+		}
 	}
 
 	applyFlags(&cfg)
@@ -134,6 +150,9 @@ func (cfg config) validate() error {
 		return fmt.Errorf("cache %q is not one of %v", cfg.Cache, cacheModes)
 	}
 	for id, mc := range cfg.Overrides {
+		if strings.Contains(id, "*") && mc.Name != "" {
+			return fmt.Errorf("overrides.%s: a pattern cannot set name", id)
+		}
 		if mc.Cache != "" && !slices.Contains(cacheModes, mc.Cache) {
 			return fmt.Errorf("overrides.%s: cache %q is not one of %v", id, mc.Cache, cacheModes)
 		}
@@ -178,4 +197,65 @@ func initConfig(path string, applyFlags func(*config)) error {
 		return err
 	}
 	return f.Close()
+}
+
+func (base modelConfig) merge(over modelConfig) modelConfig {
+	effort := base.Effort
+	if over.Effort != nil {
+		effort = over.Effort
+	}
+	return modelConfig{
+		Cache:          cmp.Or(over.Cache, base.Cache),
+		Name:           cmp.Or(over.Name, base.Name),
+		MaxInputTokens: first(over.MaxInputTokens, base.MaxInputTokens),
+		MaxTokens:      first(over.MaxTokens, base.MaxTokens),
+		Images:         first(over.Images, base.Images),
+		Thinking:       first(over.Thinking, base.Thinking),
+		Effort:         effort,
+	}
+}
+
+func overrideFor(overrides map[string]modelConfig, id string) modelConfig {
+	var matched []string
+	for pat := range overrides {
+		if matchPattern(pat, id) {
+			matched = append(matched, pat)
+		}
+	}
+	slices.SortFunc(matched, func(a, b string) int {
+		exact := func(s string) int {
+			if strings.Contains(s, "*") {
+				return 0
+			}
+			return 1
+		}
+		lit := func(s string) int { return len(s) - strings.Count(s, "*") }
+		// A Go map has no order, so the key breaks ties.
+		return cmp.Or(cmp.Compare(exact(a), exact(b)), cmp.Compare(lit(a), lit(b)), cmp.Compare(a, b))
+	})
+	var out modelConfig
+	for _, pat := range matched {
+		out = out.merge(overrides[pat])
+	}
+	return out
+}
+
+func matchPattern(pattern, s string) bool {
+	prefix, pattern, ok := strings.Cut(pattern, "*")
+	if !ok {
+		return prefix == s
+	}
+	if s, ok = strings.CutPrefix(s, prefix); !ok {
+		return false
+	}
+	for {
+		part, rest, ok := strings.Cut(pattern, "*")
+		if !ok {
+			return strings.HasSuffix(s, part)
+		}
+		if _, s, ok = strings.Cut(s, part); !ok {
+			return false
+		}
+		pattern = rest
+	}
 }

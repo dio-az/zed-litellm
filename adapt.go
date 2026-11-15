@@ -49,7 +49,7 @@ func (a adapter) adapt(body []byte) ([]byte, string) {
 	model := stringValue(req.get("model"))
 
 	mode := a.cache
-	if m := a.overrides[model].Cache; m != "" {
+	if m := overrideFor(a.overrides, model).Cache; m != "" {
 		mode = m
 	}
 

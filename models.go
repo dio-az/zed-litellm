@@ -130,15 +130,17 @@ func buildModelList(entries []modelInfoEntry, overrides map[string]modelConfig) 
 			groups[e.ModelName] = append(groups[e.ModelName], e.ModelInfo)
 		}
 	}
-	for id := range overrides {
-		if _, ok := groups[id]; !ok {
-			log.Printf("overrides: %q is not a chat model in LiteLLM /model/info", id)
+	ids := slices.Sorted(maps.Keys(groups))
+	for pat := range overrides {
+		_, isDefault := defaultOverrides[pat]
+		if !isDefault && !slices.ContainsFunc(ids, func(id string) bool { return matchPattern(pat, id) }) {
+			log.Printf("overrides: %q is not a chat model in LiteLLM /model/info", pat)
 		}
 	}
 
 	out := []anthropicModel{}
-	for _, id := range slices.Sorted(maps.Keys(groups)) {
-		if m, ok := toAnthropicModel(id, mergeDeployments(groups[id]), overrides[id]); ok {
+	for _, id := range ids {
+		if m, ok := toAnthropicModel(id, mergeDeployments(groups[id]), overrideFor(overrides, id)); ok {
 			out = append(out, m)
 		} else {
 			log.Printf("models: %q has no token limits; set max_input_tokens and max_tokens", id)
